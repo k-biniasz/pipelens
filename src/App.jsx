@@ -43,7 +43,7 @@ const FIELD_ALIASES = {
   linkedin_skills:    ["linkedin_skills","linkedin skills","skills","member_skills"],
   linkedin_history:   ["linkedin_history","job_history","work_history","experience","linkedin_experience"],
   linkedin_headline:  ["linkedin_headline","headline","linkedin_title"],
-  account_name:       ["account_name","accountname","account name","company","company_name","companyname","organization","org","account"],
+  account_name:       ["account_name","accountname","account name","company","company_name","companyname","organization","org","account","company/account","company / account","companyaccount"],
 };
 
 const NOTE_FIELDS = ["iqm_notes","iqm_notes_regional","sdr_notes","sdr_notes_regional","budget_notes","authority_notes","need_notes","timing_notes","team_notes","ae_feedback","next_steps"];
@@ -198,7 +198,7 @@ function InlineMarkdown({ text }) {
 }
 
 // ── Utilities ────────────────────────────────────────────────────────────────
-function norm(s){ return s?.toLowerCase().replace(/[\s_\-&()]/g,"") ?? ""; }
+function norm(s){ return s?.toLowerCase().replace(/[\s_\-&()/]/g,"") ?? ""; }
 function detectCol(headers, aliases){
   for(const a of aliases){
     const i = headers.findIndex(h => norm(h)===norm(a));
