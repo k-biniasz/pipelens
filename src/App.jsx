@@ -826,15 +826,15 @@ export default function App(){
           if(!accountMap[acct]) accountMap[acct] = [];
           accountMap[acct].push(r);
         }
-        const accountLines = Object.entries(accountMap).slice(0,80).map(([acct, acctRows]) => {
+        const accountLines = Object.entries(accountMap).slice(0,200).map(([acct, acctRows]) => {
           const profiles = acctRows.map(r => buildLeadProfile(r,colMap)).filter(Boolean).join(" | ");
           const notes    = reengageNoteFields.flatMap(f => {
             const col = colMap[f]; if(!col) return [];
-            return acctRows.map(r => r[col]).filter(v => v&&String(v).trim().length>5).map(v => String(v).trim().slice(0,200));
+            return acctRows.map(r => r[col]).filter(v => v&&String(v).trim().length>5).map(v => String(v).trim().slice(0,150));
           }).join(" // ");
-          return "ACCOUNT: "+acct+"\n  Profiles: "+profiles+"\n  Notes: "+(notes||"(no notes)");
+          return "ACCOUNT: "+acct+" | Profiles: "+profiles+" | Notes: "+(notes||"(no notes)");
         });
-        accountBlock = "=== NON-CONVERTED ACCOUNTS ("+Object.keys(accountMap).length+" accounts) ===\n\n"+accountLines.join("\n\n");
+        accountBlock = "=== NON-CONVERTED ACCOUNTS ("+Object.keys(accountMap).length+" accounts) ===\n\n"+accountLines.join("\n");
       } else {
         const leadLines = candidates.slice(0,80).map(r => {
           const profile = buildLeadProfile(r,colMap);
@@ -850,7 +850,7 @@ export default function App(){
       if(!accountBlock.trim()){ setReengageInsight("No non-converted leads found."); setReengageLoading(false); return; }
 
       const convProfiles = rows.filter(r=>isConverted(r[activeConvCol])).slice(0,30).map(r=>buildLeadProfile(r,colMap)).filter(Boolean).join("\n");
-      const inputBlock = accountBlock.slice(0,12000)+"\n\n=== CONVERTED LEAD PROFILES FOR REFERENCE ===\n"+convProfiles.slice(0,3000);
+      const inputBlock = accountBlock.slice(0,25000)+"\n\n=== CONVERTED LEAD PROFILES FOR REFERENCE ===\n"+convProfiles.slice(0,2000);
 
       const prompt = inputBlock+"\n\nAnalyze the non-converted "+(accountCol?"accounts":"leads")+" above. Identify which ones show signals suggesting the ACCOUNT is still a good target for re-engagement (SDR outreach or targeted ad campaigns), even though the specific lead we met didn't convert. Look for: genuine interest or pain expressed in notes, right company profile but wrong contact, timing issues that may resolve, budget interest with authority gap, technical fit signals.\n\nProvide:\n## 1. Re-engagement Signal Patterns\nWhat note patterns or profile signals indicate a good account to re-target. Max 6 bullets.\n## 2. "
       +(accountCol ? "Full List of Accounts to Re-engage\nList EVERY account that shows any re-engagement potential — not just the top ones. For each account include: account name, re-engagement signals observed, suggested approach (ads vs SDR outreach), and what to lead with. Group them by priority tier (High / Medium / Low) but include all of them.\n## 3. " : "")
