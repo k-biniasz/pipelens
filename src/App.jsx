@@ -480,13 +480,16 @@ export default function App(){
         headers:{"Content-Type":"application/json"},
         body: JSON.stringify({ id, fileName: fname, colMap: cmap, companyContext: ctx, rows: data }),
       });
-      if(!res.ok) throw new Error("save failed");
+      if(!res.ok) {
+        const body = await res.json().catch(()=>({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
       setSaveStatus("saved");
       setPastSessions(prev => {
         const filtered = prev.filter(s => s.id !== id);
         return [{ id, name: fname, file_name: fname, row_count: data.length, created_at: new Date().toISOString() }, ...filtered];
       });
-    } catch(e) { setSaveStatus("error"); }
+    } catch(e) { setSaveStatus(e.message||"error"); }
   }, []);
 
   // Save an individual analysis result to TiDB
@@ -990,7 +993,7 @@ export default function App(){
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             {saveStatus==="saving" && <span style={{fontSize:11,color:"#555"}}>Saving to TiDB...</span>}
             {saveStatus==="saved"  && <span style={{fontSize:11,color:ACCENT3}}>✓ Saved to TiDB</span>}
-            {saveStatus==="error"  && <span style={{fontSize:11,color:"#FF6B6B"}}>TiDB save failed</span>}
+            {saveStatus && saveStatus!=="saving" && saveStatus!=="saved" && <span style={{fontSize:11,color:"#FF6B6B"}} title={saveStatus}>TiDB save failed: {saveStatus}</span>}
             {rows && <button onClick={reset} style={{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"#666",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:11}}>New File</button>}
           </div>
         </div>
