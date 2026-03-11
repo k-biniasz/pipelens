@@ -853,12 +853,12 @@ export default function App(){
       const inputBlock = accountBlock.slice(0,12000)+"\n\n=== CONVERTED LEAD PROFILES FOR REFERENCE ===\n"+convProfiles.slice(0,3000);
 
       const prompt = inputBlock+"\n\nAnalyze the non-converted "+(accountCol?"accounts":"leads")+" above. Identify which ones show signals suggesting the ACCOUNT is still a good target for re-engagement (SDR outreach or targeted ad campaigns), even though the specific lead we met didn't convert. Look for: genuine interest or pain expressed in notes, right company profile but wrong contact, timing issues that may resolve, budget interest with authority gap, technical fit signals.\n\nProvide:\n## 1. Re-engagement Signal Patterns\nWhat note patterns or profile signals indicate a good account to re-target. Max 6 bullets.\n## 2. "
-      +(accountCol ? "Top Accounts to Re-engage\nList the specific accounts that show the strongest re-engagement signals. For each: account name, why it's worth re-targeting, suggested approach (ads vs SDR), and what to lead with.\n## 3. " : "")
+      +(accountCol ? "Full List of Accounts to Re-engage\nList EVERY account that shows any re-engagement potential — not just the top ones. For each account include: account name, re-engagement signals observed, suggested approach (ads vs SDR outreach), and what to lead with. Group them by priority tier (High / Medium / Low) but include all of them.\n## 3. " : "")
       +"Persona Gap Hypothesis\nFor accounts worth re-targeting, what type of person should we reach next instead — different title, seniority, or function?\n## "+(accountCol?"4":"3")+". Recommended Re-engagement Message Themes\nTop 4 message angles to use in ads or SDR outreach for these accounts.\n## "+(accountCol?"5":"4")+". Accounts to Deprioritize\nWhich accounts show clear signals of no fit and should be removed from targeting entirely.";
 
       const result = await callClaude(
         MD_SYSTEM+CTX+" You are a B2B revenue intelligence analyst identifying account re-engagement opportunities. Focus on accounts where meeting notes or profile data suggest company-level fit even if the specific contact wasn't the right buyer. Be specific and actionable.",
-        prompt, 3000
+        prompt, 5000
       );
       setReengageInsight(result);
     } catch(e){ setReengageInsight("Analysis failed: "+(e.message||"unknown error")); }
