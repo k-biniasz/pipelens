@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
 
 const ACCENT  = "#E8FF47";
@@ -410,6 +410,11 @@ export default function App(){
   const [reengageLoading,setReengageLoading]     = useState(false);
   const [reengageNoteFields,setReengageNoteFields] = useState([]);
   const [exportError,setExportError]         = useState("");
+  const [sessionId,setSessionId]             = useState(() => localStorage.getItem("pipelens_session") || null);
+  const [saveStatus,setSaveStatus]           = useState(null); // "saving"|"saved"|"error"
+  const [pastSessions,setPastSessions]       = useState([]);
+  const [sessionsLoading,setSessionsLoading] = useState(false);
+  const [loadingSession,setLoadingSession]   = useState(false);
   const [companyContext,setCompanyContext]     = useState("We are PingCAP, the company behind TiDB — an open-source, MySQL-compatible, distributed SQL database designed for HTAP (Hybrid Transactional and Analytical Processing) workloads. TiDB is built for enterprises that need horizontal scalability, high availability, and strong consistency without sharding complexity. Key differentiators: MySQL compatibility (no app rewrite needed), auto-sharding, real-time analytics alongside transactions, multi-cloud/on-prem deployment, and open source. Primary competitors: CockroachDB, Aurora, Vitess/MySQL, YugabyteDB, SingleStore. ICP: mid-to-large engineering-led companies with high-volume transactional workloads outgrowing MySQL or needing global scale.");
   const [showContext,setShowContext]           = useState(false);
 
@@ -442,8 +447,11 @@ export default function App(){
         setNotesInsight(null); setConvInsight(null); setDisqInsight(null);
         setStuckInsight(null); setLinkedinInsight(null);
         setAeInsights({}); setAeTeamInsight(null); setSelectedAE(null);
-    setNegInsight(null); setNegPersonaInsight(null); setReengageInsight(null);
         setActiveTab("overview");
+        // Save to TiDB
+        const newId = crypto.randomUUID();
+        setSessionId(newId); localStorage.setItem("pipelens_session", newId);
+        saveSession(newId, file.name, detected, data, companyContext);
       } catch(e){ setError("Could not parse file. Please upload a valid CSV or Excel file."); }
     };
     reader.readAsArrayBuffer(file);
@@ -454,6 +462,90 @@ export default function App(){
     const f = e.dataTransfer.files[0];
     if(f) parseFile(f);
   },[parseFile]);
+
+  // Load past sessions on mount
+  useEffect(() => {
+    setSessionsLoading(true);
+    fetch("/api/sessions").then(r=>r.json()).then(data => {
+      if(Array.isArray(data)) setPastSessions(data);
+    }).catch(()=>{}).finally(()=>setSessionsLoading(false));
+  }, []);
+
+  // Save rows + colMap to TiDB after upload
+  const saveSession = useCallback(async (id, fname, cmap, data, ctx) => {
+    setSaveStatus("saving");
+    try {
+      const res = await fetch("/api/sessions", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ id, fileName: fname, colMap: cmap, companyContext: ctx, rows: data }),
+      });
+      if(!res.ok) throw new Error("save failed");
+      setSaveStatus("saved");
+      setPastSessions(prev => {
+        const filtered = prev.filter(s => s.id !== id);
+        return [{ id, name: fname, file_name: fname, row_count: data.length, created_at: new Date().toISOString() }, ...filtered];
+      });
+    } catch(e) { setSaveStatus("error"); }
+  }, []);
+
+  // Save an individual analysis result to TiDB
+  const saveAnalysis = useCallback(async (type, content, aeOwner) => {
+    const sid = localStorage.getItem("pipelens_session");
+    if(!sid || !content) return;
+    fetch("/api/analysis", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ sessionId: sid, analysisType: type, aeOwner: aeOwner||null, content }),
+    }).catch(()=>{});
+  }, []);
+
+  // Load a past session from TiDB
+  const loadSession = useCallback(async (id) => {
+    setLoadingSession(true);
+    try {
+      const [sessionRes, analysisRes] = await Promise.all([
+        fetch("/api/sessions", { method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id }) }),
+        fetch(`/api/analysis?sessionId=${id}`),
+      ]);
+      const session  = await sessionRes.json();
+      const analyses = await analysisRes.json();
+      if(session.error) throw new Error(session.error);
+
+      // Restore core data
+      const hdrs = session.rows.length ? Object.keys(session.rows[0]) : [];
+      setHeaders(hdrs); setRows(session.rows); setFileName(session.fileName||"");
+      setColMap(session.colMap||{});
+      if(session.companyContext) setCompanyContext(session.companyContext);
+      setSessionId(id); localStorage.setItem("pipelens_session", id);
+
+      // Restore detected field selections
+      const detected = session.colMap||{};
+      const noteDetected = NOTE_FIELDS.filter(f => detected[f]);
+      setSelectedNoteFields(noteDetected); setSelectedStuckFields(noteDetected);
+      setAeNoteFields(noteDetected); setNegNoteFields(noteDetected); setReengageNoteFields(noteDetected);
+      setSelectedLinkedInFields(LINKEDIN_FIELDS.filter(f => detected[f]));
+      setNegLinkedInFields(LINKEDIN_FIELDS.filter(f => detected[f]));
+
+      // Restore analysis results
+      const aeMap = {};
+      for(const a of (analyses||[])){
+        if(a.analysis_type === "notes")       setNotesInsight(a.content);
+        else if(a.analysis_type === "conv")   setConvInsight(a.content);
+        else if(a.analysis_type === "disq")   setDisqInsight(a.content);
+        else if(a.analysis_type === "stuck")  setStuckInsight(a.content);
+        else if(a.analysis_type === "linkedin") setLinkedinInsight(a.content);
+        else if(a.analysis_type === "neg")    setNegInsight(a.content);
+        else if(a.analysis_type === "neg_persona") setNegPersonaInsight(a.content);
+        else if(a.analysis_type === "reengage")    setReengageInsight(a.content);
+        else if(a.analysis_type === "ae_team")     setAeTeamInsight(a.content);
+        else if(a.analysis_type === "ae" && a.ae_owner) aeMap[a.ae_owner] = a.content;
+      }
+      if(Object.keys(aeMap).length) setAeInsights(aeMap);
+      setActiveTab("overview");
+    } catch(e){ setError("Failed to load session."); }
+    setLoadingSession(false);
+  }, []);
 
   const activeConvCol = colMap.converted||manualConvCol;
 
@@ -547,7 +639,7 @@ export default function App(){
         "Data from CONVERTED leads:\n\n"+text.slice(0,16000)+"\n\nProvide these sections:\n## 1. Top Conversion Signals\n## 2. Ideal Lead Profile\n## 3. Common Pain Points\n## 4. Budget Patterns\n## 5. Authority Signals\n## 6. Timing Triggers\n## 7. Technology Context\n## 8. What to Listen For on Future Calls",
         3000
       );
-      setNotesInsight(result);
+      setNotesInsight(result); saveAnalysis("notes", result);
     } catch(e){ setNotesInsight("Analysis failed: "+(e.message||"unknown error")); }
     setNotesLoading(false);
   };
@@ -563,7 +655,7 @@ export default function App(){
         "Profile data for "+subset.length+" CONVERTED leads:\n\n"+profiles.join("\n").slice(0,16000)+"\n\nProvide:\n## 1. Top Converting Lead Archetypes\n## 2. Job Title and Role Patterns\n## 3. Industry and Vertical Breakdown\n## 4. Technology Stack Patterns\n## 5. TCP Patterns\n## 6. Segment and Region Patterns\n## 7. Ideal Customer Profile Definition\n## 8. Targeting Criteria for CRM, LinkedIn, and ad platforms",
         3000
       );
-      setConvInsight(result);
+      setConvInsight(result); saveAnalysis("conv", result);
     } catch(e){ setConvInsight("Analysis failed: "+(e.message||"unknown error")); }
     setConvLoading(false);
   };
@@ -581,7 +673,7 @@ export default function App(){
         "Data from DISQUALIFIED leads:\n\n"+text.slice(0,16000)+"\n\nProvide:\n## 1. Top Disqualification Reasons\n## 2. Bad-Fit Lead Profiles\n## 3. Red Flag Signals in Notes\n## 4. Technology Red Flags\n## 5. Budget and Authority Issues\n## 6. Bad-Fit Company Profiles\n## 7. Early Screening Questions\n## 8. ICP Exclusion Criteria",
         3000
       );
-      setDisqInsight(result);
+      setDisqInsight(result); saveAnalysis("disq", result);
     } catch(e){ setDisqInsight("Analysis failed: "+(e.message||"unknown error")); }
     setDisqLoading(false);
   };
@@ -603,7 +695,7 @@ export default function App(){
         combined+"\n\nProvide:\n## 1. Missing Qualification (BANT criteria absent or unclear)\n## 2. Next Steps Gaps\n## 3. Primary Need and Pain Gaps\n## 4. Authority Gaps\n## 5. Budget Gaps\n## 6. Profile Differences\n## 7. Common Themes in Stuck Notes\n## 8. What Converted Leads Had That Stuck Leads Did Not\n## 9. Recommended Actions",
         3000
       );
-      setStuckInsight(result);
+      setStuckInsight(result); saveAnalysis("stuck", result);
     } catch(e){ setStuckInsight("Analysis failed: "+(e.message||"unknown error")); }
     setStuckLoading(false);
   };
@@ -643,7 +735,8 @@ export default function App(){
         2500
       );
 
-      setLinkedinInsight(part1+"\n\n---\n\n"+part2);
+      const combined = part1+"\n\n---\n\n"+part2;
+      setLinkedinInsight(combined); saveAnalysis("linkedin", combined);
     } catch(e){ setLinkedinInsight("Analysis failed: "+(e.message||"unknown error")); }
     setLinkedinLoading(false);
   };
@@ -664,6 +757,7 @@ export default function App(){
         3000
       );
       setAeInsights(prev => ({...prev,[ae.name]:result}));
+      saveAnalysis("ae", result, ae.name);
     } catch(e){
       setAeInsights(prev => ({...prev,[ae.name]:"Analysis failed: "+(e.message||"unknown error")}));
     }
@@ -688,7 +782,7 @@ export default function App(){
         body+"\n\nProvide:\n## 1. Leaderboard Summary\n## 2. Performance Spread\n## 3. What Top Performers Do Differently\n## 4. Common Team-Wide Qualification Gaps\n## 5. Systemic Issues\n## 6. Team Coaching Priorities\n## 7. Individual Callouts",
         3500
       );
-      setAeTeamInsight(result);
+      setAeTeamInsight(result); saveAnalysis("ae_team", result);
     } catch(e){ setAeTeamInsight("Analysis failed: "+(e.message||"unknown error")); }
     setAeTeamLoading(false);
   };
@@ -755,7 +849,7 @@ export default function App(){
         MD_SYSTEM+CTX+" You are a B2B sales intelligence analyst building a Negative ICP."+CONCISE,
         prompt, 2500
       );
-      setNegInsight(result);
+      setNegInsight(result); saveAnalysis("neg", result);
     } catch(e){ setNegInsight("Analysis failed: "+(e.message||"unknown error")); }
     setNegLoading(false);
   };
@@ -801,7 +895,7 @@ export default function App(){
         MD_SYSTEM+CTX+" You are a B2B persona analyst. Your job is to identify how the PEOPLE who convert differ from those who don't — focus on persona, career, seniority, and background differences, not product fit. Be specific and concise.",
         prompt, 2500
       );
-      setNegPersonaInsight(result);
+      setNegPersonaInsight(result); saveAnalysis("neg_persona", result);
     } catch(e){ setNegPersonaInsight("Analysis failed: "+(e.message||"unknown error")); }
     setNegPersonaLoading(false);
   };
@@ -860,7 +954,7 @@ export default function App(){
         MD_SYSTEM+CTX+" You are a B2B revenue intelligence analyst identifying account re-engagement opportunities. Focus on accounts where meeting notes or profile data suggest company-level fit even if the specific contact wasn't the right buyer. Be specific and actionable.",
         prompt, 5000
       );
-      setReengageInsight(result);
+      setReengageInsight(result); saveAnalysis("reengage", result);
     } catch(e){ setReengageInsight("Analysis failed: "+(e.message||"unknown error")); }
     setReengageLoading(false);
   };
@@ -874,6 +968,8 @@ export default function App(){
     setStuckInsight(null); setLinkedinInsight(null);
     setAeInsights({}); setAeTeamInsight(null); setSelectedAE(null);
     setNegInsight(null); setNegPersonaInsight(null); setReengageInsight(null);
+    setSessionId(null); setSaveStatus(null);
+    localStorage.removeItem("pipelens_session");
   };
 
   return (
@@ -891,8 +987,33 @@ export default function App(){
             <div style={{fontFamily:"monospace",fontSize:10,letterSpacing:3,color:ACCENT,marginBottom:10}}>SALES INTELLIGENCE</div>
             <h1 style={{fontSize:32,fontWeight:800,margin:0,letterSpacing:"-1.5px",lineHeight:1.1}}>Marketing Meeting<br/><span style={{color:ACCENT}}>Intelligence</span></h1>
           </div>
-          {rows && <button onClick={reset} style={{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"#666",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:11}}>New File</button>}
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            {saveStatus==="saving" && <span style={{fontSize:11,color:"#555"}}>Saving to TiDB...</span>}
+            {saveStatus==="saved"  && <span style={{fontSize:11,color:ACCENT3}}>✓ Saved to TiDB</span>}
+            {saveStatus==="error"  && <span style={{fontSize:11,color:"#FF6B6B"}}>TiDB save failed</span>}
+            {rows && <button onClick={reset} style={{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"#666",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:11}}>New File</button>}
+          </div>
         </div>
+
+        {!rows && pastSessions.length > 0 && (
+          <div style={{marginBottom:24}}>
+            <div style={{fontSize:11,color:"#555",textTransform:"uppercase",letterSpacing:1,marginBottom:10}}>Resume a previous session</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {pastSessions.map(s => (
+                <button key={s.id} onClick={()=>loadSession(s.id)} disabled={loadingSession}
+                  style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:10,padding:"10px 16px",cursor:"pointer",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",transition:"background 0.15s"}}
+                  onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,0.06)"}
+                  onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,0.03)"}
+                >
+                  <span style={{fontSize:13,color:"#ccc",fontWeight:500}}>{s.file_name||s.name}</span>
+                  <span style={{fontSize:11,color:"#444"}}>{s.row_count!=null?s.row_count.toLocaleString()+" rows · ":""}{new Date(s.created_at).toLocaleDateString()}</span>
+                </button>
+              ))}
+            </div>
+            {loadingSession && <div style={{fontSize:12,color:"#555",marginTop:8}}>Loading session...</div>}
+            <div style={{marginTop:16,borderTop:"1px solid rgba(255,255,255,0.05)",paddingTop:16,fontSize:11,color:"#444"}}>— or upload a new file —</div>
+          </div>
+        )}
 
         {!rows && (
           <div>
