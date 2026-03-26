@@ -44,6 +44,7 @@ const FIELD_ALIASES = {
   linkedin_history:   ["linkedin_history","job_history","work_history","experience","linkedin_experience"],
   linkedin_headline:  ["linkedin_headline","headline","linkedin_title"],
   account_name:       ["account_name","accountname","account name","company","company_name","companyname","organization","org","account","company/account","company / account","companyaccount"],
+  net_new_arr:        ["net new arr amount (usd)","net_new_arr_amount_usd","net new arr amount","net_new_arr_amount","net new arr","net_new_arr","new arr amount (usd)","new arr amount","new arr","arr amount (usd)","arr amount","pipeline amount"],
 };
 
 const NOTE_FIELDS = ["iqm_notes","iqm_notes_regional","sdr_notes","sdr_notes_regional","budget_notes","authority_notes","need_notes","timing_notes","team_notes","ae_feedback","next_steps"];
@@ -234,6 +235,22 @@ function computeConvByDim(rows, dimCol, convCol){
     .filter(d => d.total >= 2)
     .sort((a,b) => b.rate-a.rate);
 }
+function computePipelineBreakdown(rows, dimCol, convCol, arrCol){
+  const map = {};
+  for(const r of rows){
+    const d = r[dimCol] ? String(r[dimCol]).trim() : "(Unknown)";
+    if(!map[d]) map[d] = {iqms:0,opps:0,pipeline:0};
+    map[d].iqms++;
+    if(isConverted(r[convCol])) map[d].opps++;
+    if(arrCol){
+      const v = parseFloat(String(r[arrCol]||"").replace(/[$,]/g,""));
+      if(!isNaN(v)) map[d].pipeline += v;
+    }
+  }
+  return Object.entries(map)
+    .map(([label,d]) => ({label,...d}))
+    .sort((a,b) => b.pipeline-a.pipeline||b.iqms-a.iqms);
+}
 function buildLeadProfile(row, colMap){
   return PROFILE_FIELDS
     .map(({key,label}) => {
@@ -300,6 +317,38 @@ function DimCard({title,data,color}){
           ))}
         </div>
       )}
+    </div>
+  );
+}
+function PipelineBreakdownCard({title,data,color,hasArr}){
+  if(!data||data.length===0) return null;
+  const fmtArr = v => v>=1e6 ? "$"+(v/1e6).toFixed(1)+"M" : v>=1e3 ? "$"+(v/1e3).toFixed(0)+"K" : "$"+v.toFixed(0);
+  return (
+    <div style={{background:"rgba(255,255,255,0.025)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:14,padding:"20px 22px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:16}}>
+        <div style={{width:7,height:7,borderRadius:"50%",background:color,boxShadow:"0 0 7px "+color}}/>
+        <span style={{fontFamily:"monospace",fontSize:10,letterSpacing:2,color:"#666",textTransform:"uppercase"}}>{title}</span>
+      </div>
+      <table style={{width:"100%",borderCollapse:"collapse"}}>
+        <thead>
+          <tr style={{borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
+            <th style={{textAlign:"left",fontSize:10,color:"#555",fontWeight:600,paddingBottom:8,paddingRight:12,fontFamily:"monospace",textTransform:"uppercase",letterSpacing:1}}>Segment</th>
+            <th style={{textAlign:"right",fontSize:10,color:"#555",fontWeight:600,paddingBottom:8,paddingRight:12,fontFamily:"monospace",textTransform:"uppercase",letterSpacing:1}}>IQMs</th>
+            <th style={{textAlign:"right",fontSize:10,color:"#555",fontWeight:600,paddingBottom:8,paddingRight:12,fontFamily:"monospace",textTransform:"uppercase",letterSpacing:1}}>Opps</th>
+            {hasArr && <th style={{textAlign:"right",fontSize:10,color:"#555",fontWeight:600,paddingBottom:8,fontFamily:"monospace",textTransform:"uppercase",letterSpacing:1}}>Pipeline</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((row,i) => (
+            <tr key={row.label} style={{borderBottom:i<data.length-1?"1px solid rgba(255,255,255,0.04)":"none"}}>
+              <td style={{fontSize:13,color:i===0?"#fff":"#bbb",fontWeight:i===0?600:400,padding:"9px 12px 9px 0"}}>{row.label}</td>
+              <td style={{textAlign:"right",fontSize:13,color:"#ccc",fontFamily:"monospace",paddingRight:12,padding:"9px 12px"}}>{row.iqms.toLocaleString()}</td>
+              <td style={{textAlign:"right",fontSize:13,color:ACCENT3,fontFamily:"monospace",fontWeight:600,paddingRight:12,padding:"9px 12px"}}>{row.opps.toLocaleString()}</td>
+              {hasArr && <td style={{textAlign:"right",fontSize:13,color:color,fontFamily:"monospace",fontWeight:700,padding:"9px 0"}}>{row.pipeline>0?fmtArr(row.pipeline):"—"}</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -565,7 +614,12 @@ export default function App(){
     const allSignals     = dimData.flatMap(d => d.data.slice(0,3).map(item => ({...item,dim:d.label,color:d.color}))).sort((a,b) => b.rate-a.rate).slice(0,8);
     const totalDisq  = statusCol ? rows.filter(r => isDisqualified(r[statusCol])).length : 0;
     const totalStuck = statusCol ? rows.filter(r => !isConverted(r[activeConvCol])&&!isDisqualified(r[statusCol])&&isStuck(r[statusCol])).length : 0;
-    return {totalMeetings,totalConverted,overallRate,dimData,allSignals,totalDisq,totalStuck,statusCol};
+    const arrCol = colMap.net_new_arr||null;
+    const segmentCol = colMap.segment||null;
+    const tcpCol = colMap.tcp_regional||null;
+    const segmentBreakdown = segmentCol ? computePipelineBreakdown(rows,segmentCol,activeConvCol,arrCol) : null;
+    const tcpBreakdown = tcpCol ? computePipelineBreakdown(rows,tcpCol,activeConvCol,arrCol) : null;
+    return {totalMeetings,totalConverted,overallRate,dimData,allSignals,totalDisq,totalStuck,statusCol,segmentBreakdown,tcpBreakdown,hasArr:!!arrCol};
   },[rows,activeConvCol,colMap]);
 
   const aeData = useMemo(() => {
@@ -1130,6 +1184,19 @@ export default function App(){
                       <span style={{fontSize:11,color:"#555"}}>{s.converted+"/"+s.total}</span>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+            {(analysis.segmentBreakdown||analysis.tcpBreakdown) && (
+              <div style={{marginBottom:28}}>
+                <SectionLabel text="Pipeline Breakdowns" accent={ACCENT4}/>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))",gap:16}}>
+                  {analysis.segmentBreakdown && (
+                    <PipelineBreakdownCard title="By Segment (SKA / KA / Corp)" data={analysis.segmentBreakdown} color={ACCENT4} hasArr={analysis.hasArr}/>
+                  )}
+                  {analysis.tcpBreakdown && (
+                    <PipelineBreakdownCard title="By TCP (NA & EMEA & APAC)" data={analysis.tcpBreakdown} color={ACCENT5} hasArr={analysis.hasArr}/>
+                  )}
                 </div>
               </div>
             )}
