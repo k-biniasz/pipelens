@@ -235,21 +235,46 @@ function computeConvByDim(rows, dimCol, convCol){
     .filter(d => d.total >= 2)
     .sort((a,b) => b.rate-a.rate);
 }
-function computePipelineBreakdown(rows, dimCol, convCol, arrCol){
-  const map = {};
+function computeCrossTab(rows, segmentCol, tcpCol, convCol, arrCol){
+  const segSet = new Set(), tcpSet = new Set();
+  const cells = {};
   for(const r of rows){
-    const d = r[dimCol] ? String(r[dimCol]).trim() : "(Unknown)";
-    if(!map[d]) map[d] = {iqms:0,opps:0,pipeline:0};
-    map[d].iqms++;
-    if(isConverted(r[convCol])) map[d].opps++;
+    const seg = segmentCol && r[segmentCol] ? String(r[segmentCol]).trim() : "(Unknown)";
+    const tcp = tcpCol && r[tcpCol] ? String(r[tcpCol]).trim() : "(Unknown)";
+    segSet.add(seg); tcpSet.add(tcp);
+    if(!cells[seg]) cells[seg] = {};
+    if(!cells[seg][tcp]) cells[seg][tcp] = {iqms:0,opps:0,pipeline:0};
+    cells[seg][tcp].iqms++;
+    if(isConverted(r[convCol])) cells[seg][tcp].opps++;
     if(arrCol){
       const v = parseFloat(String(r[arrCol]||"").replace(/[$,]/g,""));
-      if(!isNaN(v)) map[d].pipeline += v;
+      if(!isNaN(v)) cells[seg][tcp].pipeline += v;
     }
   }
-  return Object.entries(map)
-    .map(([label,d]) => ({label,...d}))
-    .sort((a,b) => b.pipeline-a.pipeline||b.iqms-a.iqms);
+  const SEG_ORDER = ["SKA","KA","Corp"];
+  const segments = [...segSet].sort((a,b)=>{
+    const ai=SEG_ORDER.indexOf(a), bi=SEG_ORDER.indexOf(b);
+    if(ai>=0&&bi>=0) return ai-bi; if(ai>=0) return -1; if(bi>=0) return 1;
+    return a.localeCompare(b);
+  });
+  const tcpValues = [...tcpSet].sort();
+  const rowTotals={}, colTotals={}, grandTotal={iqms:0,opps:0,pipeline:0};
+  for(const seg of segments){
+    rowTotals[seg]={iqms:0,opps:0,pipeline:0};
+    for(const tcp of tcpValues){
+      const c=cells[seg]?.[tcp]||{iqms:0,opps:0,pipeline:0};
+      rowTotals[seg].iqms+=c.iqms; rowTotals[seg].opps+=c.opps; rowTotals[seg].pipeline+=c.pipeline;
+    }
+  }
+  for(const tcp of tcpValues){
+    colTotals[tcp]={iqms:0,opps:0,pipeline:0};
+    for(const seg of segments){
+      const c=cells[seg]?.[tcp]||{iqms:0,opps:0,pipeline:0};
+      colTotals[tcp].iqms+=c.iqms; colTotals[tcp].opps+=c.opps; colTotals[tcp].pipeline+=c.pipeline;
+    }
+    grandTotal.iqms+=colTotals[tcp].iqms; grandTotal.opps+=colTotals[tcp].opps; grandTotal.pipeline+=colTotals[tcp].pipeline;
+  }
+  return {segments,tcpValues,cells,rowTotals,colTotals,grandTotal};
 }
 function buildLeadProfile(row, colMap){
   return PROFILE_FIELDS
@@ -320,33 +345,66 @@ function DimCard({title,data,color}){
     </div>
   );
 }
-function PipelineBreakdownCard({title,data,color,hasArr}){
-  if(!data||data.length===0) return null;
-  const fmtArr = v => v>=1e6 ? "$"+(v/1e6).toFixed(1)+"M" : v>=1e3 ? "$"+(v/1e3).toFixed(0)+"K" : "$"+v.toFixed(0);
+function CrossTabTable({title,crossTab,metric,color,fmtVal}){
+  const {segments,tcpValues,cells,rowTotals,colTotals,grandTotal} = crossTab;
+  const gt = grandTotal[metric];
+  if(!segments.length||!tcpValues.length) return null;
+  const pct = v => gt>0 ? (v/gt*100).toFixed(2)+"%" : "0.00%";
+  const fmt = fmtVal||(v=>v.toLocaleString());
+  const TH = ({children,left,c}) => (
+    <th style={{textAlign:left?"left":"right",fontSize:10,color:c||"#555",fontWeight:600,padding:"0 8px 10px",fontFamily:"monospace",textTransform:"uppercase",letterSpacing:1,whiteSpace:"nowrap",paddingLeft:left?0:8}}>{children}</th>
+  );
+  const TD = ({children,bold,c,left}) => (
+    <td style={{textAlign:left?"left":"right",fontSize:12,color:c||(bold?"#fff":"#bbb"),fontFamily:"monospace",fontWeight:bold?700:400,padding:"7px 8px",whiteSpace:"nowrap",paddingLeft:left?0:8}}>{children}</td>
+  );
+  const PCT = ({children}) => (
+    <td style={{textAlign:"right",fontSize:11,color:"#555",fontFamily:"monospace",padding:"7px 8px",whiteSpace:"nowrap"}}>{children}</td>
+  );
   return (
-    <div style={{background:"rgba(255,255,255,0.025)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:14,padding:"20px 22px"}}>
-      <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:16}}>
+    <div style={{background:"rgba(255,255,255,0.025)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:14,padding:"20px 24px",overflowX:"auto"}}>
+      <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:14}}>
         <div style={{width:7,height:7,borderRadius:"50%",background:color,boxShadow:"0 0 7px "+color}}/>
         <span style={{fontFamily:"monospace",fontSize:10,letterSpacing:2,color:"#666",textTransform:"uppercase"}}>{title}</span>
       </div>
-      <table style={{width:"100%",borderCollapse:"collapse"}}>
+      <table style={{borderCollapse:"collapse",minWidth:"100%"}}>
         <thead>
-          <tr style={{borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
-            <th style={{textAlign:"left",fontSize:10,color:"#555",fontWeight:600,paddingBottom:8,paddingRight:12,fontFamily:"monospace",textTransform:"uppercase",letterSpacing:1}}>Segment</th>
-            <th style={{textAlign:"right",fontSize:10,color:"#555",fontWeight:600,paddingBottom:8,paddingRight:12,fontFamily:"monospace",textTransform:"uppercase",letterSpacing:1}}>IQMs</th>
-            <th style={{textAlign:"right",fontSize:10,color:"#555",fontWeight:600,paddingBottom:8,paddingRight:12,fontFamily:"monospace",textTransform:"uppercase",letterSpacing:1}}>Opps</th>
-            {hasArr && <th style={{textAlign:"right",fontSize:10,color:"#555",fontWeight:600,paddingBottom:8,fontFamily:"monospace",textTransform:"uppercase",letterSpacing:1}}>Pipeline</th>}
+          <tr style={{borderBottom:"1px solid rgba(255,255,255,0.1)"}}>
+            <TH left>{metric==="pipeline"?"ICP Pipeline":metric==="opps"?"ICP Opps":"ICP IQMs"}</TH>
+            {tcpValues.flatMap(tcp=>[
+              <TH key={tcp}>{tcp}</TH>,
+              <TH key={tcp+"_p"} c="#444">% of Total</TH>
+            ])}
+            <TH c={color}>Grand Total</TH>
           </tr>
         </thead>
         <tbody>
-          {data.map((row,i) => (
-            <tr key={row.label} style={{borderBottom:i<data.length-1?"1px solid rgba(255,255,255,0.04)":"none"}}>
-              <td style={{fontSize:13,color:i===0?"#fff":"#bbb",fontWeight:i===0?600:400,padding:"9px 12px 9px 0"}}>{row.label}</td>
-              <td style={{textAlign:"right",fontSize:13,color:"#ccc",fontFamily:"monospace",paddingRight:12,padding:"9px 12px"}}>{row.iqms.toLocaleString()}</td>
-              <td style={{textAlign:"right",fontSize:13,color:ACCENT3,fontFamily:"monospace",fontWeight:600,paddingRight:12,padding:"9px 12px"}}>{row.opps.toLocaleString()}</td>
-              {hasArr && <td style={{textAlign:"right",fontSize:13,color:color,fontFamily:"monospace",fontWeight:700,padding:"9px 0"}}>{row.pipeline>0?fmtArr(row.pipeline):"—"}</td>}
-            </tr>
-          ))}
+          {segments.map(seg=>{
+            const rt=rowTotals[seg][metric];
+            return (
+              <tr key={seg} style={{borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+                <TD left bold={false} c="#ccc">{seg}</TD>
+                {tcpValues.flatMap(tcp=>{
+                  const v=cells[seg]?.[tcp]?.[metric]||0;
+                  return [
+                    <TD key={tcp}>{v>0?fmt(v):"—"}</TD>,
+                    <PCT key={tcp+"_p"}>{v>0?pct(v):"—"}</PCT>
+                  ];
+                })}
+                <TD bold c={color}>{pct(rt)}</TD>
+              </tr>
+            );
+          })}
+          <tr style={{borderTop:"1px solid rgba(255,255,255,0.1)"}}>
+            <TD left bold c="#555">{metric==="pipeline"?"Total":""}</TD>
+            {tcpValues.flatMap(tcp=>{
+              const v=colTotals[tcp][metric];
+              return [
+                <TD key={tcp} bold={metric==="pipeline"} c={metric==="pipeline"?"#fff":undefined}>{metric==="pipeline"&&v>0?fmt(v):""}</TD>,
+                <PCT key={tcp+"_p"}><span style={{fontWeight:600,color:"#777"}}>{pct(v)}</span></PCT>
+              ];
+            })}
+            <TD bold c={color}>{metric==="pipeline"&&gt>0?fmt(gt):""}</TD>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -617,9 +675,8 @@ export default function App(){
     const arrCol = colMap.net_new_arr||null;
     const segmentCol = colMap.segment||null;
     const tcpCol = colMap.tcp_regional||null;
-    const segmentBreakdown = segmentCol ? computePipelineBreakdown(rows,segmentCol,activeConvCol,arrCol) : null;
-    const tcpBreakdown = tcpCol ? computePipelineBreakdown(rows,tcpCol,activeConvCol,arrCol) : null;
-    return {totalMeetings,totalConverted,overallRate,dimData,allSignals,totalDisq,totalStuck,statusCol,segmentBreakdown,tcpBreakdown,hasArr:!!arrCol};
+    const crossTab = (segmentCol||tcpCol) ? computeCrossTab(rows,segmentCol,tcpCol,activeConvCol,arrCol) : null;
+    return {totalMeetings,totalConverted,overallRate,dimData,allSignals,totalDisq,totalStuck,statusCol,crossTab,hasArr:!!arrCol};
   },[rows,activeConvCol,colMap]);
 
   const aeData = useMemo(() => {
@@ -1187,16 +1244,13 @@ export default function App(){
                 </div>
               </div>
             )}
-            {(analysis.segmentBreakdown||analysis.tcpBreakdown) && (
+            {analysis.crossTab && (
               <div style={{marginBottom:28}}>
-                <SectionLabel text="Pipeline Breakdowns" accent={ACCENT4}/>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))",gap:16}}>
-                  {analysis.segmentBreakdown && (
-                    <PipelineBreakdownCard title="By Segment (SKA / KA / Corp)" data={analysis.segmentBreakdown} color={ACCENT4} hasArr={analysis.hasArr}/>
-                  )}
-                  {analysis.tcpBreakdown && (
-                    <PipelineBreakdownCard title="By TCP (NA & EMEA & APAC)" data={analysis.tcpBreakdown} color={ACCENT5} hasArr={analysis.hasArr}/>
-                  )}
+                <SectionLabel text="Segment × TCP Breakdowns" accent={ACCENT4}/>
+                <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                  <CrossTabTable title="ICP IQMs" crossTab={analysis.crossTab} metric="iqms" color={ACCENT4}/>
+                  <CrossTabTable title="ICP Opps" crossTab={analysis.crossTab} metric="opps" color={ACCENT3}/>
+                  {analysis.hasArr && <CrossTabTable title="ICP Pipeline" crossTab={analysis.crossTab} metric="pipeline" color={ACCENT5} fmtVal={v=>v>=1e6?"$"+(v/1e6).toFixed(3).replace(/\.?0+$/,"")+"M":v>=1e3?"$"+(v/1e3).toFixed(0)+"K":"$"+v.toFixed(0)}/>}
                 </div>
               </div>
             )}
