@@ -14,7 +14,7 @@ const FIELD_ALIASES = {
   ae_owner:           ["ae","ae name","ae_name","aename","account executive","account_executive","accountexecutive","owner","assigned to","assigned_to","rep","sales rep","sales_rep","salesrep"],
   job_role:           ["job_role","jobrole","role","job role"],
   job_title:          ["job_title","jobtitle","title","job title","contact_title"],
-  segment:            ["segment","market_segment","marketsegment","account_segment"],
+  segment:            ["segment","market_segment","marketsegment","account_segment","segmentation (for na/emea reference)","segmentation(fornaemearef)","segmentation for na/emea reference","segmentation for na emea reference","segmentation"],
   industry:           ["industry","industry_vertical"],
   vertical:           ["vertical","sector"],
   company_size:       ["company_size","companysize","employee_count","employees","size","headcount"],
