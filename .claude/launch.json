@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Frontend (Vite)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5173
+    },
+    {
+      "name": "Full Stack (Vercel Dev)",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vercel", "dev", "--yes"],
+      "port": 3000
+    }
+  ]
+}
